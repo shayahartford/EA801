@@ -1,16 +1,38 @@
 import network
 import ntptime
 import time
-from machine import Pin
-import menu  # Importado para ler a variável quantidade_atual dinamicamente[cite: 1]
+from machine import Pin, PWM
+import menu
 from menu import menu_principal, horarios
 
-# LED Verde no GPIO 11 da BitDogLab V7[cite: 2]
-led = Pin(11, Pin.OUT)
+# 1. Configuração dos Periféricos (LED, Buzzer e Servo)[cite: 2]
+led = Pin(11, Pin.OUT)                   # LED Verde no GPIO 11[cite: 2]
 led.value(0)
+
+buzzer = PWM(Pin(21))                     # Buzzer A no GPIO 21[cite: 2]
+buzzer.duty_u16(0)
+
+servo = PWM(Pin(8))                       # Sinal do Servomotor no GPIO 8[cite: 2]
+servo.freq(50)                            # Frequência padrão de 50 Hz para servos
 
 WIFI_SSID = "iPhone de Luana"
 WIFI_PASS = "floripou"
+
+def definir_angulo_servo(angulo):
+    """Define a posição do servomotor entre 0 e 180 graus."""
+    # Pulso varia tipicamente de 500.000 ns (0°) a 2.500.000 ns (180°)
+    duty_ns = int(500000 + (angulo / 180) * 2000000)
+    servo.duty_ns(duty_ns)
+
+# Garante que o servo inicie fechado (0°)
+definir_angulo_servo(0)
+
+def emitir_bip():
+    """Emite um bip sonoro curto no buzzer.[cite: 1]"""
+    buzzer.freq(2000)
+    buzzer.duty_u16(32768)
+    time.sleep_ms(200)
+    buzzer.duty_u16(0)
 
 def conectar_wifi():
     wlan = network.WLAN(network.STA_IF)
@@ -41,14 +63,29 @@ def obter_horario_local():
     tm = time.localtime(time.time() + fuso_utc_3)
     return tm[3], tm[4], tm[5]
 
-def piscar_led_por_tempo(duracao_segundos):
-    """Pisca o LED Verde continuamente durante o tempo total em segundos."""
+def acionar_mecanismo_alimentacao(duracao_segundos):
+    """Executa a sequência de aviso sonoro, abertura do servo e pisca do LED.[cite: 1]"""
+    # 1. Sinal Sonoro de início[cite: 1]
+    emitir_bip()
+    time.sleep_ms(100)
+    emitir_bip()
+
+    # 2. Abre o servomotor (90 graus)[cite: 1]
+    definir_angulo_servo(90)
+
+    # 3. Mantém o mecanismo aberto pelo tempo configurado piscando o LED[cite: 1]
     tempo_inicio = time.time()
     while (time.time() - tempo_inicio) < duracao_segundos:
         led.value(1)
         time.sleep_ms(100)
         led.value(0)
         time.sleep_ms(100)
+
+    # 4. Retorna o servomotor para a posição inicial/fechado (0 graus)[cite: 1]
+    definir_angulo_servo(0)
+    
+    # Sinal sonoro de término
+    emitir_bip()
 
 ultimo_minuto_disparado = -1
 
@@ -59,10 +96,9 @@ def verificar_alimentacao():
     if segundo == 0 and minuto != ultimo_minuto_disparado:
         for refeicao, horaf in horarios.items():
             if hora == horaf[0] and minuto == horaf[1]:
-                # Lê a quantidade atual configurada no menu ("Pouco", "Medio", "Muito")[cite: 1]
+                # Lê a quantidade configurada ("Pouco", "Medio", "Muito")[cite: 1]
                 qtd = getattr(menu, 'quantidade_atual', 'Medio')
                 
-                # Mapeia a quantidade para o tempo de piscada em segundos
                 if qtd == "Pouco":
                     tempo_execucao = 5
                 elif qtd == "Muito":
@@ -70,17 +106,17 @@ def verificar_alimentacao():
                 else:  # "Medio"
                     tempo_execucao = 10
 
-                print(f"!!! ALIMENTANDO: {refeicao} | Qtd: {qtd} | Tempo: {tempo_execucao}s !!!")
+                print(f"!!! SERVO ACIONADO: {refeicao} | Qtd: {qtd} | Tempo: {tempo_execucao}s !!!")
                 
-                # Executa o pisca-pisca pelo tempo determinado[cite: 1, 2]
-                piscar_led_por_tempo(tempo_execucao)
+                # Aciona o ciclo completo de liberação da ração[cite: 1]
+                acionar_mecanismo_alimentacao(tempo_execucao)
 
                 ultimo_minuto_disparado = minuto
                 break
 
-# Conecta à rede e sincroniza horário
+# Inicialização do sistema
 if conectar_wifi():
     sincronizar_ntp()
 
-# Inicia a interface gráfica passando a função de verificação
+# Execução do menu interativo
 menu_principal(callback_verificacao=verificar_alimentacao)
