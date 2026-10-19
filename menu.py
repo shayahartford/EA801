@@ -528,14 +528,13 @@ def tela_alimentacao_manual(
 
             if not alimentando:
 
-                alimentando = True
-
                 if callback_acionar_manual:
+                    iniciou = callback_acionar_manual(True)
 
-                    callback_acionar_manual(
-                        True
-                    )
-
+                    if iniciou:
+                        alimentando = True
+                else:
+                    alimentando = True
 
         # =================================================
         # B = PARAR

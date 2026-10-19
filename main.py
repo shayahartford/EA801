@@ -23,9 +23,6 @@ led.value(0)
 buzzer = PWM(Pin(21))
 buzzer.duty_u16(0)
 
-servo = PWM(Pin(8))
-servo.freq(50)
-
 
 # =========================================================
 # WI-FI
@@ -38,24 +35,42 @@ MAX_TENTATIVAS_WIFI = 5
 
 
 # =========================================================
-# SERVO
+# MOTOR CC + PONTE H
 # =========================================================
 
-def definir_angulo_servo(angulo):
+STBY = Pin(20, Pin.OUT)
+MOTOR_FWD = Pin(4, Pin.OUT)
+MOTOR_BWD = Pin(9, Pin.OUT)
+MOTOR_PWM = PWM(Pin(8))
 
-    duty_ns = int(
-        500000
-        +
-        (angulo / 180)
-        * 2000000
-    )
+MOTOR_PWM.freq(1000)
+VELOCIDADE_MOTOR = 40000  # Faixa: 0 a 65535
 
-    servo.duty_ns(duty_ns)
+# Habilita a ponte H
+STBY.value(1)
 
 
-# Começa fechado
+def parar_motor():
+    MOTOR_PWM.duty_u16(0)
+    MOTOR_FWD.value(0)
+    MOTOR_BWD.value(0)
 
-definir_angulo_servo(0)
+
+def motor_horario():
+    MOTOR_FWD.value(1)
+    MOTOR_BWD.value(0)
+    MOTOR_PWM.duty_u16(VELOCIDADE_MOTOR)
+
+
+def motor_antihorario():
+    MOTOR_FWD.value(0)
+    MOTOR_BWD.value(1)
+    MOTOR_PWM.duty_u16(VELOCIDADE_MOTOR)
+
+
+# Inicia com o motor parado
+parar_motor()
+
 
 
 # =========================================================
@@ -511,169 +526,110 @@ def obter_horario_local():
 
 
 # =========================================================
-# ALIMENTAÇÃO AUTOMÁTICA
+# ALIMENTAÇÃO AUTOMÁTICA COM MOTOR CC
 # =========================================================
 
-def acionar_mecanismo_alimentacao(
-    duracao_segundos
-):
-
-    # -----------------------------------------------------
-    # Bipes de início
-    # -----------------------------------------------------
-
-    emitir_bip()
-
-    time.sleep_ms(100)
-
-    emitir_bip()
+alimentacao_automatica_ativa = False
 
 
-    # -----------------------------------------------------
-    # Abre servo
-    # -----------------------------------------------------
+def acionar_mecanismo_alimentacao(duracao_segundos):
+    global alimentacao_automatica_ativa
 
-    definir_angulo_servo(90)
+    # Não permite conflito com a alimentação manual
+    if alimentacao_manual_ativa:
+        return False
 
+    if alimentacao_automatica_ativa:
+        return False
 
-    # -----------------------------------------------------
-    # Mantém aberto pelo tempo determinado
-    # -----------------------------------------------------
+    alimentacao_automatica_ativa = True
 
-    tempo_inicio = time.time()
-
-
-    while (
-        time.time() - tempo_inicio
-    ) < duracao_segundos:
-
-        led.value(1)
-
+    try:
+        # Bipes de início
+        emitir_bip()
         time.sleep_ms(100)
+        emitir_bip()
 
+        # Inicia a rotação
+        motor_horario()
+
+        inicio = time.ticks_ms()
+        duracao_ms = int(duracao_segundos * 1000)
+        proxima_troca_led = inicio
+        led_ligado = False
+
+        while time.ticks_diff(
+            time.ticks_ms(), inicio
+        ) < duracao_ms:
+
+            agora = time.ticks_ms()
+
+            # Pisca o LED durante a alimentação
+            if time.ticks_diff(
+                agora, proxima_troca_led
+            ) >= 0:
+                led_ligado = not led_ligado
+                led.value(1 if led_ligado else 0)
+                proxima_troca_led = time.ticks_add(
+                    agora, 200
+                )
+
+            time.sleep_ms(20)
+
+    finally:
+        # Garante a parada ao terminar ou ocorrer erro
+        parar_motor()
         led.value(0)
-
-        time.sleep_ms(100)
-
-
-    # -----------------------------------------------------
-    # Fecha servo
-    # -----------------------------------------------------
-
-    definir_angulo_servo(0)
-
-
-    # -----------------------------------------------------
-    # Bip final
-    # -----------------------------------------------------
+        alimentacao_automatica_ativa = False
 
     emitir_bip()
-
+    return True
 
 # =========================================================
-# ALIMENTAÇÃO MANUAL
-# =========================================================
-#
-# ligado = True:
-#     abre o servo e deixa aberto.
-#
-# ligado = False:
-#     fecha o servo.
-#
-# Não existe tempo pré-definido.
-#
+# ALIMENTAÇÃO MANUAL COM MOTOR CC
 # =========================================================
 
 alimentacao_manual_ativa = False
 
 
 def acionar_manual(ligado):
-
     global alimentacao_manual_ativa
 
-
     if ligado:
-
-        # -------------------------------------------------
-        # Evita ligar novamente
-        # -------------------------------------------------
+        # Não permite iniciar durante alimentação automática
+        if alimentacao_automatica_ativa:
+            print("Manual bloqueado: motor em uso.")
+            return False
 
         if alimentacao_manual_ativa:
-
-            return
-
+            return False
 
         alimentacao_manual_ativa = True
 
-
-        print(
-            "!!! ALIMENTAÇÃO MANUAL INICIADA !!!"
-        )
-
-
-        # ---------------------------------------------
-        # Bip de início
-        # ---------------------------------------------
+        print("!!! ALIMENTAÇÃO MANUAL INICIADA !!!")
 
         emitir_bip()
-
         time.sleep_ms(100)
-
         emitir_bip()
 
-
-        # ---------------------------------------------
-        # Abre servo
-        # ---------------------------------------------
-
-        definir_angulo_servo(90)
-
-
-        # ---------------------------------------------
-        # LED ligado
-        # ---------------------------------------------
-
+        motor_horario()
         led.value(1)
 
+        return True
 
     else:
-
-        # -------------------------------------------------
-        # Evita desligar se já estiver desligado
-        # -------------------------------------------------
-
         if not alimentacao_manual_ativa:
+            return False
 
-            return
-
-
+        parar_motor()
+        led.value(0)
         alimentacao_manual_ativa = False
 
-
-        print(
-            "!!! ALIMENTAÇÃO MANUAL ENCERRADA !!!"
-        )
-
-
-        # ---------------------------------------------
-        # Fecha servo
-        # ---------------------------------------------
-
-        definir_angulo_servo(0)
-
-
-        # ---------------------------------------------
-        # Desliga LED
-        # ---------------------------------------------
-
-        led.value(0)
-
-
-        # ---------------------------------------------
-        # Bip de finalização
-        # ---------------------------------------------
-
+        print("!!! ALIMENTAÇÃO MANUAL ENCERRADA !!!")
         emitir_bip()
+
+        return True
+
 
 
 # =========================================================
