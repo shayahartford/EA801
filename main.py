@@ -510,64 +510,109 @@ def obter_horario_local():
     )
 
 
+
 # =========================================================
-# ALIMENTAÇÃO AUTOMÁTICA
+# ALIMENTAÇÃO AUTOMÁTICA NÃO BLOQUEANTE
 # =========================================================
 
-def acionar_mecanismo_alimentacao(
-    duracao_segundos
-):
+estado_auto = "inativo"
+inicio_estado_auto = 0
+inicio_alimentacao = 0
+duracao_alimentacao_ms = 0
 
-    # -----------------------------------------------------
-    # Bipes de início
-    # -----------------------------------------------------
+# Fila de refeições aguardando execução
+fila_alimentacoes = []
 
-    emitir_bip()
-
-    time.sleep_ms(100)
-
-    emitir_bip()
-
-
-    # -----------------------------------------------------
-    # Abre servo
-    # -----------------------------------------------------
-
-    definir_angulo_servo(90)
+# Última data em que cada refeição foi agendada.
+# Protege contra execuções repetidas no mesmo dia
+# durante a execução atual do programa.
+ultima_execucao_por_refeicao = {}
 
 
-    # -----------------------------------------------------
-    # Mantém aberto pelo tempo determinado
-    # -----------------------------------------------------
+def iniciar_mecanismo_alimentacao(duracao_segundos):
+    global estado_auto, inicio_estado_auto
+    global duracao_alimentacao_ms
 
-    tempo_inicio = time.time()
+    if estado_auto != "inativo":
+        return False
 
+    duracao_alimentacao_ms = duracao_segundos * 1000
 
-    while (
-        time.time() - tempo_inicio
-    ) < duracao_segundos:
+    buzzer.freq(2000)
+    buzzer.duty_u16(32768)
 
-        led.value(1)
+    inicio_estado_auto = time.ticks_ms()
+    estado_auto = "bipe1"
 
-        time.sleep_ms(100)
-
-        led.value(0)
-
-        time.sleep_ms(100)
-
-
-    # -----------------------------------------------------
-    # Fecha servo
-    # -----------------------------------------------------
-
-    definir_angulo_servo(0)
+    print("Iniciando alimentação automática")
+    return True
 
 
-    # -----------------------------------------------------
-    # Bip final
-    # -----------------------------------------------------
+def atualizar_mecanismo_alimentacao():
+    global estado_auto, inicio_estado_auto
+    global inicio_alimentacao
 
-    emitir_bip()
+    agora = time.ticks_ms()
+
+    decorrido = time.ticks_diff(
+        agora, inicio_estado_auto
+    )
+
+    # Primeiro bipe: 200 ms
+    if estado_auto == "bipe1":
+        if decorrido >= 200:
+            buzzer.duty_u16(0)
+            inicio_estado_auto = agora
+            estado_auto = "intervalo"
+
+    # Intervalo entre os bipes: 100 ms
+    elif estado_auto == "intervalo":
+        if decorrido >= 100:
+            buzzer.duty_u16(32768)
+            inicio_estado_auto = agora
+            estado_auto = "bipe2"
+
+    # Segundo bipe: 200 ms
+    elif estado_auto == "bipe2":
+        if decorrido >= 200:
+            buzzer.duty_u16(0)
+            definir_angulo_servo(90)
+
+            inicio_alimentacao = agora
+            inicio_estado_auto = agora
+            led.value(1)
+            estado_auto = "alimentando"
+
+    # Servo aberto pelo tempo configurado
+    elif estado_auto == "alimentando":
+        tempo_aberto = time.ticks_diff(
+            agora, inicio_alimentacao
+        )
+
+        # Pisca o LED sem bloquear o programa
+        if (tempo_aberto // 200) % 2 == 0:
+            led.value(1)
+        else:
+            led.value(0)
+
+        if tempo_aberto >= duracao_alimentacao_ms:
+            definir_angulo_servo(0)
+            led.value(0)
+
+            buzzer.freq(2000)
+            buzzer.duty_u16(32768)
+
+            inicio_estado_auto = agora
+            estado_auto = "bipe_final"
+
+    # Bipe final: 200 ms
+    elif estado_auto == "bipe_final":
+        if decorrido >= 200:
+            buzzer.duty_u16(0)
+            estado_auto = "inativo"
+
+            print("Alimentação automática concluída")
+
 
 
 # =========================================================
@@ -587,93 +632,37 @@ def acionar_mecanismo_alimentacao(
 alimentacao_manual_ativa = False
 
 
-def acionar_manual(ligado):
 
+def acionar_manual(ligado):
     global alimentacao_manual_ativa
 
-
     if ligado:
-
-        # -------------------------------------------------
-        # Evita ligar novamente
-        # -------------------------------------------------
+        if estado_auto != "inativo":
+            print("Manual bloqueado: alimentação automática em andamento.")
+            return False
 
         if alimentacao_manual_ativa:
-
-            return
-
+            return False
 
         alimentacao_manual_ativa = True
 
+        # Mantenha aqui os bipes, a abertura do servo e o LED.
 
-        print(
-            "!!! ALIMENTAÇÃO MANUAL INICIADA !!!"
-        )
-
-
-        # ---------------------------------------------
-        # Bip de início
-        # ---------------------------------------------
-
-        emitir_bip()
-
-        time.sleep_ms(100)
-
-        emitir_bip()
-
-
-        # ---------------------------------------------
-        # Abre servo
-        # ---------------------------------------------
-
-        definir_angulo_servo(90)
-
-
-        # ---------------------------------------------
-        # LED ligado
-        # ---------------------------------------------
-
-        led.value(1)
-
+        return True
 
     else:
-
-        # -------------------------------------------------
         # Evita desligar se já estiver desligado
-        # -------------------------------------------------
-
         if not alimentacao_manual_ativa:
-
             return
-
 
         alimentacao_manual_ativa = False
 
-
-        print(
-            "!!! ALIMENTAÇÃO MANUAL ENCERRADA !!!"
-        )
-
-
-        # ---------------------------------------------
-        # Fecha servo
-        # ---------------------------------------------
+        print("!!! ALIMENTAÇÃO MANUAL ENCERRADA !!!")
 
         definir_angulo_servo(0)
-
-
-        # ---------------------------------------------
-        # Desliga LED
-        # ---------------------------------------------
-
         led.value(0)
-
-
-        # ---------------------------------------------
-        # Bip de finalização
-        # ---------------------------------------------
-
         emitir_bip()
+
 
 
 # =========================================================
@@ -683,152 +672,119 @@ def acionar_manual(ligado):
 ultima_alimentacao = None
 
 
+
 # =========================================================
 # VERIFICAR ALIMENTAÇÃO AUTOMÁTICA
 # =========================================================
 
 def verificar_alimentacao():
+    global ultima_execucao_por_refeicao
 
-    global ultima_alimentacao
-
-
-    # -----------------------------------------------------
-    # Não executa alimentação automática enquanto houver
-    # uma alimentação manual acontecendo.
-    # -----------------------------------------------------
-
-    if alimentacao_manual_ativa:
-
-        return
-
+    # Primeiro, avança a máquina de estados.
+    # Não utiliza esperas bloqueantes.
+    atualizar_mecanismo_alimentacao()
 
     agora = time.time()
 
+    # O RTC sincronizado por NTP está em UTC.
+    # Aplicamos UTC-3 para obter o horário local.
+    tm = time.localtime(agora - 3 * 3600)
 
-    tm = time.localtime(
-        agora
-        +
-        (-3 * 3600)
-    )
+    ano, mes, dia = tm[0], tm[1], tm[2]
+    hora, minuto = tm[3], tm[4]
 
+    data_atual = (ano, mes, dia)
 
-    ano = tm[0]
-    mes = tm[1]
-    dia = tm[2]
-
-    hora = tm[3]
-    minuto = tm[4]
-    segundo = tm[5]
-
-
-    # -----------------------------------------------------
-    # Identifica o minuto atual
-    # -----------------------------------------------------
-
-    horario_atual = (
-        ano,
-        mes,
-        dia,
-        hora,
-        minuto
-    )
-
-
-    # =====================================================
-    # VERIFICA TODAS AS REFEIÇÕES
-    # =====================================================
-
+    # Verifica cada refeição configurada
     for refeicao, horaf in horarios.items():
+        hora_programada, minuto_programado = horaf
 
-        hora_programada = horaf[0]
-
-        minuto_programado = horaf[1]
-
-
-        # -------------------------------------------------
-        # O segundo não importa.
-        #
-        # Exemplo:
-        #
-        # 19:00:01 -> executa
-        # 19:00:20 -> executaria
-        # 19:00:50 -> executaria
-        #
-        # Mas somente uma vez no minuto.
-        # -------------------------------------------------
-
-        if (
-            hora == hora_programada
-            and
-            minuto == minuto_programado
+        if (hora, minuto) != (
+            hora_programada, minuto_programado
         ):
+            continue
 
+        # Uma execução por refeição e horário programado por dia
+        versao = menu.versoes_horario[refeicao]
 
-            if (
-                ultima_alimentacao
-                == horario_atual
-            ):
+        identificador_execucao = (
+            data_atual,
+            versao
+        )
 
-                return
+        # Uma execução por versão da programação por dia
+        if ultima_execucao_por_refeicao.get(refeicao) == identificador_execucao:
+            continue
 
+        qtd = getattr(menu, "quantidade_atual", "Medio")
 
-            ultima_alimentacao = (
-                horario_atual
+        if qtd == "Pouco":
+            duracao = 5
+        elif qtd == "Muito":
+            duracao = 15
+        else:
+            duracao = 10
+
+        # Registra e enfileira a refeição.
+        # A fila evita perder uma refeição se outra
+        # ainda estiver sendo executada.
+        # Registra o horário e a versão que originaram a tarefa
+        fila_alimentacoes.append(
+            (
+                refeicao,
+                duracao,
+                data_atual,
+                hora_programada,
+                minuto_programado,
+                versao
             )
+        )
 
+        ultima_execucao_por_refeicao[refeicao] = (
+            identificador_execucao
+        )
 
-            # -------------------------------------------------
-            # Quantidade automática
-            # -------------------------------------------------
+        print(
+            "Refeição agendada:",
+            refeicao,
+            hora_programada,
+            minuto_programado
+        )
 
-            qtd = getattr(
-                menu,
-                "quantidade_atual",
-                "Medio"
-            )
+    # Inicia apenas tarefas que ainda correspondem
+    # à programação salva.
+    while (
+        estado_auto == "inativo"
+        and not alimentacao_manual_ativa
+        and fila_alimentacoes
+    ):
+        (
+            refeicao,
+            duracao,
+            data_refeicao,
+            hora_fila,
+            minuto_fila,
+            versao_fila
+        ) = fila_alimentacoes.pop(0)
 
+        # Descarta tarefas de outro dia
+        if data_refeicao != data_atual:
+            continue
 
-            if qtd == "Pouco":
+        # Descarta tarefas de uma versão antiga
+        if menu.versoes_horario[refeicao] != versao_fila:
+            continue
 
-                tempo_execucao = 5
+        # Descarta tarefas cujo horário não é mais o salvo
+        if tuple(horarios[refeicao]) != (
+            hora_fila,
+            minuto_fila
+        ):
+            continue
 
-            elif qtd == "Muito":
+        iniciar_mecanismo_alimentacao(duracao)
+        break
 
-                tempo_execucao = 15
-
-            else:
-
-                tempo_execucao = 10
-
-
-            print(
-                "!!! SERVO ACIONADO: "
-                + str(refeicao)
-                + " | Qtd: "
-                + str(qtd)
-                + " | Tempo: "
-                + str(tempo_execucao)
-                + "s | Horário: "
-                + "{:02d}:{:02d}:{:02d}"
-                .format(
-                    hora,
-                    minuto,
-                    segundo
-                )
-                + " !!!"
-            )
-
-
-            # -------------------------------------------------
-            # Executa alimentação automática
-            # -------------------------------------------------
-
-            acionar_mecanismo_alimentacao(
-                tempo_execucao
-            )
-
-
-            return
 
 
 # =========================================================

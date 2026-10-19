@@ -50,6 +50,12 @@ horarios = {
     "Jantar": [19, 0]
 }
 
+versoes_horario = {
+    "Cafe": 0,
+    "Almoco": 0,
+    "Jantar": 0
+}
+
 
 # =========================================================
 # HORÁRIOS EM EDIÇÃO
@@ -278,22 +284,20 @@ def tela_refeicao(callback_verificacao=None):
         # -------------------------------------------------
 
         if ler_botao(btn_c):
-
             for chave in chaves_refeicao:
 
-                horarios[chave][0] = (
-                    horarios_edicao[chave][0]
-                )
+                horario_anterior = tuple(horarios[chave])
+                novo_horario = tuple(horarios_edicao[chave])
 
-                horarios[chave][1] = (
-                    horarios_edicao[chave][1]
-                )
+                # Só cria uma nova versão se o horário mudou
+                if horario_anterior != novo_horario:
+                    versoes_horario[chave] += 1
 
+                horarios[chave][0] = novo_horario[0]
+                horarios[chave][1] = novo_horario[1]
 
-            print(
-                "Horários salvos:",
-                horarios
-            )
+            print("Horários salvos:", horarios)
+            print("Versões:", versoes_horario)
 
 
         # -------------------------------------------------
@@ -525,54 +529,39 @@ def tela_alimentacao_manual(
         # =================================================
 
         if ler_botao(btn_a):
-
             if not alimentando:
-
-                alimentando = True
-
                 if callback_acionar_manual:
+                    iniciou = callback_acionar_manual(True)
 
-                    callback_acionar_manual(
-                        True
-                    )
-
+                    if iniciou:
+                        alimentando = True
 
         # =================================================
         # B = PARAR
         # =================================================
 
         if ler_botao(btn_b):
-
             if alimentando:
+                if callback_acionar_manual:
+                    callback_acionar_manual(False)
 
                 alimentando = False
-
-                if callback_acionar_manual:
-
-                    callback_acionar_manual(
-                        False
-                    )
 
 
         # =================================================
         # SW = VOLTAR
         # =================================================
 
+
         if ler_botao(btn_sw):
 
-            # ---------------------------------------------
-            # Se ainda estiver alimentando, para primeiro
-            # ---------------------------------------------
-
+            # Se estiver alimentando manualmente, encerra primeiro
             if alimentando:
 
-                alimentando = False
-
                 if callback_acionar_manual:
+                    callback_acionar_manual(False)
 
-                    callback_acionar_manual(
-                        False
-                    )
+                alimentando = False
 
             return
 
