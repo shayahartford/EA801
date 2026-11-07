@@ -25,6 +25,11 @@ adc_y = ADC(Pin(26))
 btn_sw = Pin(22, Pin.IN, Pin.PULL_UP)
 JOY_INVERT_Y = False
 
+def aguardar_soltar(pino):
+    while pino.value() == 0:
+        time.sleep_ms(10)
+    time.sleep_ms(50)
+
 # =========================================================
 # HORARIOS SALVOS E VERSOES
 # =========================================================
@@ -221,6 +226,8 @@ def tela_alimentacao_manual(callback_acionar_manual=None, callback_verificacao=N
         time.sleep_ms(20)
 
 
+
+
 # =========================================================
 # MENU PRINCIPAL
 # =========================================================
@@ -251,6 +258,8 @@ def menu_principal(callback_verificacao=None, callback_acionar_manual=None):
             ultimo_movimento = agora
 
         if ler_botao(btn_sw):
+            aguardar_soltar(btn_sw)
+
             opcao_atual = opcoes[selecionado]
 
             if opcao_atual == "Refeicao":
